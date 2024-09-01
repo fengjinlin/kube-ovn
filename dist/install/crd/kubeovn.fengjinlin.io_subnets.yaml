@@ -1,0 +1,237 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+    api-approved.kubernetes.io: "https://github.com/kubernetes/kubernetes/pull/78458"
+  name: subnets.kubeovn.fengjinlin.io
+spec:
+  group: kubeovn.fengjinlin.io
+  names:
+    kind: Subnet
+    listKind: SubnetList
+    plural: subnets
+    singular: subnet
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
+    - jsonPath: .spec.vpc
+      name: Vpc
+      type: string
+    - jsonPath: .spec.protocol
+      name: Protocol
+      type: string
+    - jsonPath: .spec.cidrBlock
+      name: CIDR
+      type: string
+    - jsonPath: .spec.private
+      name: Private
+      type: string
+    - jsonPath: .spec.default
+      name: Default
+      type: string
+    - jsonPath: .spec.gatewayType
+      name: GatewayType
+      type: string
+    - jsonPath: .status.v4UsingIPs
+      name: V4Used
+      type: string
+    - jsonPath: .status.v4AvailableIPs
+      name: V4Available
+      type: string
+    - jsonPath: .status.v6UsingIPs
+      name: V6Used
+      type: string
+    - jsonPath: .status.v6AvailableIPs
+      name: V6Available
+      type: string
+    - jsonPath: .spec.excludeIps
+      name: ExcludeIPs
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              cidrBlock:
+                type: string
+              default:
+                default: false
+                type: boolean
+              dhcpV4Options:
+                type: string
+              dhcpV6Options:
+                type: string
+              disableGatewayCheck:
+                type: boolean
+              disableInterConnection:
+                type: boolean
+              enableDHCP:
+                type: boolean
+              enableEcmp:
+                type: boolean
+              enableIPv6RA:
+                type: boolean
+              enableLb:
+                type: boolean
+              excludeIps:
+                items:
+                  type: string
+                type: array
+              externalEgressGateway:
+                type: string
+              gateway:
+                type: string
+              gatewayNode:
+                type: string
+              gatewayType:
+                default: distributed
+                enum:
+                - distributed
+                - centralized
+                type: string
+              ipv6RAConfigs:
+                type: string
+              logicalGateway:
+                type: boolean
+              mtu:
+                format: int32
+                maximum: 65535
+                minimum: 68
+                type: integer
+              namespaces:
+                items:
+                  type: string
+                type: array
+              natOutgoing:
+                default: false
+                type: boolean
+              policyRoutingPriority:
+                format: int32
+                maximum: 32765
+                minimum: 1
+                type: integer
+              policyRoutingTableID:
+                format: int32
+                maximum: 2147483647
+                minimum: 1
+                type: integer
+              protocol:
+                enum:
+                - IPv4
+                - IPv6
+                - Dual
+                type: string
+              provider:
+                type: string
+              routeTable:
+                type: string
+              u2oInterconnection:
+                type: boolean
+              u2oInterconnectionIP:
+                type: string
+              vips:
+                items:
+                  type: string
+                type: array
+              vlan:
+                type: string
+              vpc:
+                type: string
+            required:
+            - cidrBlock
+            - default
+            - gateway
+            - natOutgoing
+            type: object
+          status:
+            properties:
+              V6UsingIPRange:
+                type: string
+              activateGateway:
+                type: string
+              conditions:
+                description: Conditions represents the latest state of the object
+                items:
+                  description: SubnetCondition describes the state of an object at
+                    a certain point.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned from one status
+                        to another.
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      description: Last time the condition was probed
+                      format: date-time
+                      type: string
+                    message:
+                      description: A human readable message indicating details about
+                        the transition.
+                      type: string
+                    reason:
+                      description: The reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              dhcpV4OptionsUUID:
+                type: string
+              dhcpV6OptionsUUID:
+                type: string
+              u2oInterconnectionIP:
+                type: string
+              u2oInterconnectionVPC:
+                type: string
+              v4AvailableIPRange:
+                type: string
+              v4AvailableIPs:
+                type: number
+              v4UsingIPRange:
+                type: string
+              v4UsingIPs:
+                type: number
+              v6AvailableIPRange:
+                type: string
+              v6AvailableIPs:
+                type: number
+              v6UsingIPs:
+                type: number
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

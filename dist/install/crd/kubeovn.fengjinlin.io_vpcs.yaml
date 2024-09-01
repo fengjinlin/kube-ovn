@@ -1,0 +1,198 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+    api-approved.kubernetes.io: "https://github.com/kubernetes/kubernetes/pull/78458"
+  name: vpcs.kubeovn.fengjinlin.io
+spec:
+  group: kubeovn.fengjinlin.io
+  names:
+    kind: Vpc
+    listKind: VpcList
+    plural: vpcs
+    singular: vpc
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.ready
+      name: Ready
+      type: boolean
+    - jsonPath: .status.enableExternal
+      name: EnableExternal
+      type: boolean
+    - jsonPath: .status.enableBfd
+      name: EnableBfd
+      type: boolean
+    - jsonPath: .status.subnets
+      name: Subnets
+      type: string
+    - jsonPath: .status.extraExternalSubnets
+      name: ExtraExternalSubnets
+      type: string
+    - jsonPath: .spec.namespaces
+      name: Namespaces
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              enableBfd:
+                type: boolean
+              enableExternal:
+                type: boolean
+              extraExternalSubnets:
+                items:
+                  type: string
+                type: array
+              namespaces:
+                items:
+                  type: string
+                type: array
+              policyRoutes:
+                items:
+                  properties:
+                    action:
+                      type: string
+                    match:
+                      type: string
+                    nextHopIP:
+                      description: NextHopIP is an optional parameter. It needs to
+                        be provided only when 'action' is 'reroute'.
+                      type: string
+                    priority:
+                      type: integer
+                  type: object
+                type: array
+              staticRoutes:
+                items:
+                  properties:
+                    bfdId:
+                      type: string
+                    cidr:
+                      type: string
+                    ecmpMode:
+                      type: string
+                    nextHopIP:
+                      type: string
+                    policy:
+                      type: string
+                    routeTable:
+                      type: string
+                  required:
+                  - bfdId
+                  - cidr
+                  - ecmpMode
+                  - nextHopIP
+                  - routeTable
+                  type: object
+                type: array
+              vpcPeerings:
+                items:
+                  properties:
+                    localConnectIP:
+                      type: string
+                    remoteVpc:
+                      type: string
+                  type: object
+                type: array
+            type: object
+          status:
+            properties:
+              conditions:
+                description: Conditions represents the latest state of the object
+                items:
+                  description: VpcCondition describes the state of an object at a
+                    certain point.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned from one status
+                        to another.
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      description: Last time the condition was probed
+                      format: date-time
+                      type: string
+                    message:
+                      description: A human readable message indicating details about
+                        the transition.
+                      type: string
+                    reason:
+                      description: The reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: Type of condition.
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              default:
+                type: boolean
+              defaultSubnet:
+                type: string
+              enableBfd:
+                type: boolean
+              enableExternal:
+                type: boolean
+              extraExternalSubnets:
+                items:
+                  type: string
+                type: array
+              ready:
+                type: boolean
+              router:
+                type: string
+              sctpLoadBalancer:
+                type: string
+              sctpSessionLoadBalancer:
+                type: string
+              subnets:
+                items:
+                  type: string
+                type: array
+              tcpLoadBalancer:
+                type: string
+              tcpSessionLoadBalancer:
+                type: string
+              udpLoadBalancer:
+                type: string
+              udpSessionLoadBalancer:
+                type: string
+              vpcPeerings:
+                items:
+                  type: string
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

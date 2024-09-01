@@ -1,0 +1,102 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+    api-approved.kubernetes.io: "https://github.com/kubernetes/kubernetes/pull/78458"
+  name: ips.kubeovn.fengjinlin.io
+spec:
+  group: kubeovn.fengjinlin.io
+  names:
+    kind: IP
+    listKind: IPList
+    plural: ips
+    singular: ip
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.v4IpAddress
+      name: V4IP
+      type: string
+    - jsonPath: .spec.v6IpAddress
+      name: V6IP
+      type: string
+    - jsonPath: .spec.macAddress
+      name: Mac
+      type: string
+    - jsonPath: .spec.nodeName
+      name: Node
+      type: string
+    - jsonPath: .spec.subnet
+      name: Subnet
+      type: string
+    name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              attachIps:
+                items:
+                  type: string
+                type: array
+              attachMacs:
+                items:
+                  type: string
+                type: array
+              attachSubnets:
+                items:
+                  type: string
+                type: array
+              containerID:
+                type: string
+              ipAddress:
+                type: string
+              macAddress:
+                type: string
+              namespace:
+                type: string
+              nodeName:
+                type: string
+              podName:
+                type: string
+              podType:
+                type: string
+              subnet:
+                type: string
+              v4IpAddress:
+                type: string
+              v6IpAddress:
+                type: string
+            required:
+            - ipAddress
+            - macAddress
+            - nodeName
+            - podName
+            - subnet
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
