@@ -75,6 +75,23 @@ spec:
             type: object
           spec:
             properties:
+              acls:
+                items:
+                  properties:
+                    action:
+                      type: string
+                    direction:
+                      type: string
+                    match:
+                      type: string
+                    priority:
+                      type: integer
+                  type: object
+                type: array
+              allowSubnets:
+                items:
+                  type: string
+                type: array
               cidrBlock:
                 type: string
               default:
@@ -138,6 +155,8 @@ spec:
                 maximum: 2147483647
                 minimum: 1
                 type: integer
+              private:
+                type: boolean
               protocol:
                 enum:
                 - IPv4

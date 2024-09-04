@@ -42,7 +42,7 @@ spec:
       hostNetwork: true
       containers:
         - name: ovn-central
-          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.1
+          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.2
           imagePullPolicy: Always
           command:
             - /kube-ovn/start-db.sh

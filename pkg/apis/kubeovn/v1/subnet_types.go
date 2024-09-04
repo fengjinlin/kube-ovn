@@ -97,8 +97,6 @@ type SubnetSpec struct {
 	// +optional
 	IPv6RAConfigs string `json:"ipv6RAConfigs,omitempty"`
 
-	//Acls []ACL `json:"acls,omitempty"`
-
 	//NatOutgoingPolicyRules []NatOutgoingPolicyRule `json:"natOutgoingPolicyRules,omitempty"`
 
 	// +optional
@@ -112,6 +110,22 @@ type SubnetSpec struct {
 
 	// +optional
 	RouteTable string `json:"routeTable,omitempty"`
+
+	// +optional
+	Acls []ACL `json:"acls,omitempty"`
+	// +optional
+	Private bool `json:"private"`
+	// +optional
+	AllowSubnets []string `json:"allowSubnets,omitempty"`
+}
+
+// +k8s:deepcopy-gen=true
+
+type ACL struct {
+	Direction string `json:"direction,omitempty"`
+	Priority  int    `json:"priority,omitempty"`
+	Match     string `json:"match,omitempty"`
+	Action    string `json:"action,omitempty"`
 }
 
 // SubnetCondition describes the state of an object at a certain point.

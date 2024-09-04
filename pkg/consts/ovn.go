@@ -40,6 +40,14 @@ const (
 )
 
 const (
+	AclPriorityDefaultDrop     = 1000
+	AclPriorityAllowSubnet     = 1001
+	AclPriorityAllowJoinSubnet = 3000
+
+	AclKeyParent = "parent"
+)
+
+const (
 	InterconnectionSwitch = "ts"
 
 	DefaultServiceSessionAffinityTimeout = 10800

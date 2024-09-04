@@ -22,6 +22,8 @@ type OvnNbClientInterface interface {
 
 	LoadBalancer
 
+	ACL
+
 	Common
 }
 
@@ -91,4 +93,10 @@ type LoadBalancer interface {
 	MutateLoadBalancerOp(ctx context.Context, lbName string, mutationFunc ...func(lb *ovnnb.LoadBalancer) []*model.Mutation) ([]ovsdb.Operation, error)
 	AddLoadBalancerVip(ctx context.Context, lbName, vip string, backends ...string) error
 	DeleteLoadBalancerVip(ctx context.Context, lbName, vip string) error
+}
+
+type ACL interface {
+	GetACLByUUID(ctx context.Context, uuid string) (*ovnnb.ACL, error)
+	DeleteSwitchACL(ctx context.Context, lsName, uuid string) error
+	CreateSwitchACL(ctx context.Context, lsName string, acl *ovnnb.ACL) error
 }

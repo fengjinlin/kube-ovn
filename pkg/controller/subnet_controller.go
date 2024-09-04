@@ -184,6 +184,11 @@ func (r *subnetController) handleAddOrUpdateSubnet(ctx context.Context, subnet *
 		}
 	}
 
+	if err = translator.Subnet.ReconcileSubnetACL(ctx, subnet, r.config.JoinSubnetCIDR); err != nil {
+		logger.Error(err, "failed to reconcile subnet acl")
+		return ctrl.Result{}, err
+	}
+
 	return r.updateSubnetStatusReady(ctx, subnet, true, "SubnetReady", "Subnet is ready to work")
 }
 

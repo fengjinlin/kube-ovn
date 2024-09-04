@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/fengjinlin/kube-ovn/pkg/ovsdb/ovnnb"
+
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
 	corev1 "k8s.io/api/core/v1"
@@ -13,6 +13,7 @@ import (
 
 	ovnv1 "github.com/fengjinlin/kube-ovn/pkg/apis/kubeovn/v1"
 	"github.com/fengjinlin/kube-ovn/pkg/consts"
+	"github.com/fengjinlin/kube-ovn/pkg/ovsdb/ovnnb"
 	"github.com/fengjinlin/kube-ovn/pkg/utils"
 )
 
@@ -538,4 +539,184 @@ func (t *subnetTranslator) EnableSubnetLoadBalancer(ctx context.Context, subnetN
 	}
 
 	return nil
+}
+
+func (t *subnetTranslator) ReconcileSubnetACL(ctx context.Context, subnet *ovnv1.Subnet, joinSubnetCIDRs string) error {
+	var (
+		logger = log.FromContext(ctx)
+		err    error
+
+		lsName = subnet.Name
+	)
+
+	logger.Info("reconcile subnet acl")
+
+	var targetACLs, existingACLs []*ovnnb.ACL
+	targetACLs, _ = t.subnetTargetACLs(ctx, subnet, joinSubnetCIDRs)
+	if existingACLs, err = t.subnetExistingACLs(ctx, subnet); err != nil {
+		logger.Error(err, "failed to get subnet existing ACLs")
+		return err
+	}
+
+	var (
+		aclKeyFunc = func(acl *ovnnb.ACL) string {
+			return fmt.Sprintf("%d##%s##%s##%s", acl.Priority, acl.Direction, acl.Match, acl.Action)
+		}
+		aclToAdd, aclToDel []*ovnnb.ACL
+		existingMap        = make(map[string]*ovnnb.ACL)
+	)
+
+	for _, acl := range existingACLs {
+		existingMap[aclKeyFunc(acl)] = acl
+	}
+	for _, acl := range targetACLs {
+		key := aclKeyFunc(acl)
+		if _, ok := existingMap[key]; ok {
+			delete(existingMap, key)
+		} else {
+			aclToAdd = append(aclToAdd, acl)
+		}
+	}
+	for _, acl := range existingMap {
+		aclToDel = append(aclToDel, acl)
+	}
+
+	for _, acl := range aclToDel {
+		if err = t.ovnNbClient.DeleteSwitchACL(ctx, lsName, acl.UUID); err != nil {
+			logger.Error(err, "failed to delete subnet switch ACL")
+			return err
+		}
+	}
+
+	for _, acl := range aclToAdd {
+		if err = t.ovnNbClient.CreateSwitchACL(ctx, lsName, acl); err != nil {
+			logger.Error(err, "failed to add subnet switch ACL")
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *subnetTranslator) subnetTargetACLs(_ context.Context, subnet *ovnv1.Subnet, joinSubnetCIDRs string) ([]*ovnnb.ACL, error) {
+	var (
+		lsName      = subnet.Name
+		externalIDs = map[string]string{
+			consts.AclKeyParent: lsName,
+		}
+	)
+
+	var targetACLs []*ovnnb.ACL
+
+	if subnet.Spec.Private {
+		// default drop
+		targetACLs = append(targetACLs, &ovnnb.ACL{
+			UUID:        t.ovnNbClient.NamedUUID(),
+			Priority:    consts.AclPriorityDefaultDrop,
+			Direction:   ovnnb.ACLDirectionToLport,
+			Match:       "ip",
+			Action:      ovnnb.ACLActionDrop,
+			ExternalIDs: externalIDs,
+
+			Name:     &lsName,
+			Log:      true,
+			Severity: &ovnnb.ACLSeverityWarning,
+		})
+
+		for _, cidr := range strings.Split(subnet.Spec.CIDRBlock, ",") {
+			protocol := utils.CheckProtocol(cidr)
+			ipSuffix := "ip4"
+			if protocol == utils.ProtocolIPv6 {
+				ipSuffix = "ip6"
+			}
+
+			// allow same subnet
+			targetACLs = append(targetACLs, &ovnnb.ACL{
+				UUID:        t.ovnNbClient.NamedUUID(),
+				Priority:    consts.AclPriorityAllowSubnet,
+				Direction:   ovnnb.ACLDirectionToLport,
+				Match:       fmt.Sprintf("%s.src == %s && %s.dst == %s", ipSuffix, cidr, ipSuffix, cidr),
+				Action:      ovnnb.ACLActionAllowRelated,
+				ExternalIDs: externalIDs,
+			})
+
+			// allow join subnet
+			for _, joinCIDR := range strings.Split(joinSubnetCIDRs, "") {
+				if utils.CheckProtocol(joinCIDR) != protocol {
+					continue
+				}
+
+				targetACLs = append(targetACLs, &ovnnb.ACL{
+					UUID:        t.ovnNbClient.NamedUUID(),
+					Priority:    consts.AclPriorityAllowJoinSubnet,
+					Direction:   ovnnb.ACLDirectionToLport,
+					Match:       fmt.Sprintf("%s.src == %s", ipSuffix, joinCIDR),
+					Action:      ovnnb.ACLActionAllowRelated,
+					ExternalIDs: externalIDs,
+				})
+			}
+
+			// allow subnets
+			for _, allowCIDR := range subnet.Spec.AllowSubnets {
+				if utils.CheckProtocol(allowCIDR) != protocol {
+					continue
+				}
+
+				targetACLs = append(targetACLs, &ovnnb.ACL{
+					UUID:      t.ovnNbClient.NamedUUID(),
+					Priority:  consts.AclPriorityAllowJoinSubnet,
+					Direction: ovnnb.ACLDirectionToLport,
+					Match: fmt.Sprintf("(%s.src == %s && %s.dst == %s) || (%s.src == %s && %s.dst == %s)",
+						ipSuffix, cidr, ipSuffix, allowCIDR,
+						ipSuffix, allowCIDR, ipSuffix, cidr,
+					),
+					Action:      ovnnb.ACLActionAllowRelated,
+					ExternalIDs: externalIDs,
+				})
+			}
+		}
+	}
+
+	subnetExternalIDs := externalIDs
+	subnetExternalIDs[consts.ExternalIDsKeySubnet] = subnet.Name
+	for _, acl := range subnet.Spec.Acls {
+		targetACLs = append(targetACLs, &ovnnb.ACL{
+			UUID:        t.ovnNbClient.NamedUUID(),
+			Priority:    acl.Priority,
+			Direction:   acl.Direction,
+			Match:       acl.Match,
+			Action:      acl.Action,
+			ExternalIDs: subnetExternalIDs,
+		})
+	}
+
+	return targetACLs, nil
+}
+
+func (t *subnetTranslator) subnetExistingACLs(ctx context.Context, subnet *ovnv1.Subnet) ([]*ovnnb.ACL, error) {
+	var (
+		logger = log.FromContext(ctx)
+	)
+
+	ls, err := t.ovnNbClient.GetLogicalSwitch(ctx, subnet.Name, false)
+	if err != nil {
+		logger.Error(err, "failed to get subnet logical switch")
+		return nil, err
+	}
+
+	if len(ls.ACLs) > 0 {
+		existingACLs := make([]*ovnnb.ACL, 0, len(ls.ACLs))
+		for _, uuid := range ls.ACLs {
+			if acl, err := t.ovnNbClient.GetACLByUUID(ctx, uuid); err != nil {
+				logger.Error(err, "failed to get acl by uuid", "uuid", uuid)
+				return nil, err
+			} else {
+				existingACLs = append(existingACLs, acl)
+			}
+		}
+
+		return existingACLs, nil
+	}
+
+	return nil, nil
 }

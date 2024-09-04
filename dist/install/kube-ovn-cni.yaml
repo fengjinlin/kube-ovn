@@ -31,7 +31,7 @@ spec:
       hostPID: true
       initContainers:
         - name: install-cni
-          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.1
+          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.2
           imagePullPolicy: Always
           command: ["/kube-ovn/install-cni.sh"]
           securityContext:
@@ -44,7 +44,7 @@ spec:
               name: local-bin
       containers:
         - name: cni-server
-          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.1
+          image: registry.cn-hangzhou.aliyuncs.com/feng-k8s/kube-ovn:v0.0.1-alpha.2
           imagePullPolicy: Always
           command:
             - bash

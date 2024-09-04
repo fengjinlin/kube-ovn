@@ -1,7 +1,7 @@
 REGISTRY?=registry.cn-hangzhou.aliyuncs.com/feng-k8s
 ARCH?=amd64
 BASE_TAG=v0.0.1
-RELEASE_TAG=v0.0.1-alpha.1
+RELEASE_TAG=v0.0.1-alpha.2
 
 
 .PHONY: build-image-base
