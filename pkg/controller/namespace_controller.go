@@ -3,18 +3,23 @@ package controller
 import (
 	"context"
 	"errors"
-	ovnv1 "github.com/fengjinlin/kube-ovn/pkg/apis/kubeovn/v1"
-	"github.com/fengjinlin/kube-ovn/pkg/consts"
-	"github.com/fengjinlin/kube-ovn/pkg/utils"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"strings"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	ovnv1 "github.com/fengjinlin/kube-ovn/pkg/apis/kubeovn/v1"
+	"github.com/fengjinlin/kube-ovn/pkg/consts"
+	"github.com/fengjinlin/kube-ovn/pkg/utils"
 )
 
 type namespaceController struct {
@@ -25,8 +30,20 @@ type namespaceController struct {
 }
 
 func (r *namespaceController) SetupWithManager(mgr manager.Manager) error {
+	subnetMapFunc := func(ctx context.Context, object client.Object) []reconcile.Request {
+		subnet, ok := object.(*ovnv1.Subnet)
+		if ok && len(subnet.Spec.Namespaces) > 0 {
+			reqs := make([]reconcile.Request, 0, len(subnet.Spec.Namespaces))
+			for _, ns := range subnet.Spec.Namespaces {
+				reqs = append(reqs, reconcile.Request{NamespacedName: types.NamespacedName{Name: ns}})
+			}
+			return reqs
+		}
+		return nil
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Namespace{}).
+		Watches(&ovnv1.Subnet{}, handler.EnqueueRequestsFromMapFunc(subnetMapFunc)).
 		Complete(r)
 }
 
