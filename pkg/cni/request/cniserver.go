@@ -53,9 +53,9 @@ type CniResponse struct {
 }
 
 // Add pod request
-func (csc CniServerClient) Add(podRequest CniRequest) (*CniResponse, error) {
+func (csc CniServerClient) Add(req CniRequest) (*CniResponse, error) {
 	resp := CniResponse{}
-	res, _, errors := csc.Post("http://dummy/api/v1/add").Send(podRequest).EndStruct(&resp)
+	res, _, errors := csc.Post("http://dummy/api/v1/add").Send(req).EndStruct(&resp)
 	if len(errors) != 0 {
 		return nil, errors[0]
 	}
@@ -66,8 +66,8 @@ func (csc CniServerClient) Add(podRequest CniRequest) (*CniResponse, error) {
 }
 
 // Del pod request
-func (csc CniServerClient) Del(podRequest CniRequest) error {
-	res, body, errors := csc.Post("http://dummy/api/v1/del").Send(podRequest).End()
+func (csc CniServerClient) Del(req CniRequest) error {
+	res, body, errors := csc.Post("http://dummy/api/v1/del").Send(req).End()
 	if len(errors) != 0 {
 		return errors[0]
 	}

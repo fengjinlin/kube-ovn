@@ -9,6 +9,7 @@ import (
 type VSwitchClientInterface interface {
 	Bridge
 	Port
+	OpenVSwitch
 
 	Common
 }
@@ -27,4 +28,9 @@ type Port interface {
 
 type Interface interface {
 	CreateInterfaceOp(ifaceName, ifaceType string, ifaceExternalIds map[string]string) ([]ovsdb.Operation, error)
+}
+
+type OpenVSwitch interface {
+	ListOpenVSwitch() ([]*vswitch.OpenvSwitch, error)
+	UpdateOpenVSwitch(ovs *vswitch.OpenvSwitch, fields ...interface{}) error
 }

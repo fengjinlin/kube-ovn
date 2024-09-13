@@ -3,13 +3,13 @@ package controller
 import (
 	"context"
 	"crypto/tls"
-	"k8s.io/client-go/util/workqueue"
 	"os"
 	"runtime"
 
 	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"

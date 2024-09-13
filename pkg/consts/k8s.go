@@ -41,6 +41,9 @@ const (
 	AnnotationVpcLastPolicies = "ovn.kubernetes.io/last_policies"
 
 	AnnotationChassis = "ovn.kubernetes.io/chassis"
+
+	AnnotationIngressRateTemplate = "%s.kubernetes.io/ingress_rate"
+	AnnotationEgressRateTemplate  = "%s.kubernetes.io/egress_rate"
 )
 
 const (

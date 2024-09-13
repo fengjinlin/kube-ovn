@@ -31,6 +31,17 @@ const (
 	PortTypeOffload  = "offload-port"
 	PortTypeInternal = "internal-port"
 	PortTypeDpdk     = "dpdk-port"
+	PortTypeVethPair = "veth-pair"
+)
+
+const (
+	GatewayCheckModeDisable = iota
+	GatewayCheckModePing
+	GatewayCheckModeArp
+	GatewayCheckModePingNotConcerned
+	GatewayCheckModeArpNotConcerned
+
+	GatewayCheckMaxRetry = 200
 )
 
 const (

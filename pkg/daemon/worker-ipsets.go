@@ -2,44 +2,82 @@ package daemon
 
 import (
 	"fmt"
-	"github.com/fengjinlin/kube-ovn/pkg/utils/ipset"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/wait"
+	coreinformer "k8s.io/client-go/informers/core/v1"
+	corelister "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/exec"
 
+	ovninformer "github.com/fengjinlin/kube-ovn/pkg/client/informers/externalversions/kubeovn/v1"
+	ovnlister "github.com/fengjinlin/kube-ovn/pkg/client/listers/kubeovn/v1"
 	"github.com/fengjinlin/kube-ovn/pkg/consts"
 	"github.com/fengjinlin/kube-ovn/pkg/utils"
+	"github.com/fengjinlin/kube-ovn/pkg/utils/ipset"
 )
 
-func (c *Controller) initIPSets() error {
-	c.ipSetsController = &IPSetsController{
-		ipSets: ipset.New(exec.New()),
-	}
-
-	return nil
+type IPSetsWorker interface {
+	Run(stopCh <-chan struct{})
+	IPSetExists(name string) (bool, error)
 }
 
-func (c *Controller) setUpIPSets() error {
+func NewIPSetsWorker(config *Configuration,
+	subnetInformer ovninformer.SubnetInformer,
+	nodeInformer coreinformer.NodeInformer,
+	protocol string) (IPSetsWorker, error) {
+	return &ipSetsWorker{
+		config:        config,
+		subnetsLister: subnetInformer.Lister(),
+		nodesLister:   nodeInformer.Lister(),
+		protocol:      protocol,
+		ipSets:        ipset.New(exec.New()),
+	}, nil
+}
+
+type ipSetsWorker struct {
+	config *Configuration
+
+	subnetsLister ovnlister.SubnetLister
+	nodesLister   corelister.NodeLister
+
+	protocol string
+
+	ipSets ipset.Interface
+}
+
+func (w *ipSetsWorker) Run(stopCh <-chan struct{}) {
+	go wait.Until(func() {
+		if err := w.setUpIPSets(); err != nil {
+			klog.Error("failed to setup ipSets", err)
+		}
+	}, 3*time.Second, stopCh)
+
+	<-stopCh
+	klog.Info("stopping ipSets manager")
+}
+
+func (w *ipSetsWorker) setUpIPSets() error {
 	var protocols []string
-	switch c.protocol {
+	switch w.protocol {
 	case utils.ProtocolDual:
 		protocols = []string{utils.ProtocolIPv4, utils.ProtocolIPv6}
 	case utils.ProtocolIPv4, utils.ProtocolIPv6:
-		protocols = []string{c.protocol}
+		protocols = []string{w.protocol}
 	default:
-		return fmt.Errorf("failed to set up ipsets: protocol `%s` not supported", c.protocol)
+		return fmt.Errorf("failed to set up ipsets: protocol `%s` not supported", w.protocol)
 	}
 
-	allSubnets, err := c.subnetsLister.List(labels.Everything())
+	allSubnets, err := w.subnetsLister.List(labels.Everything())
 	if err != nil {
 		klog.Error(err)
 		return err
 	}
 
-	allNodes, err := c.nodesLister.List(labels.Everything())
+	allNodes, err := w.nodesLister.List(labels.Everything())
 	if err != nil {
 		klog.Error(err)
 		return err
@@ -57,12 +95,12 @@ func (c *Controller) setUpIPSets() error {
 
 		// services
 		var serviceCIDRs []string
-		for _, cidr := range strings.Split(c.config.ServiceClusterIPRange, ",") {
+		for _, cidr := range strings.Split(w.config.ServiceClusterIPRange, ",") {
 			if utils.CheckProtocol(cidr) == protocol {
 				serviceCIDRs = append(serviceCIDRs, cidr)
 			}
 		}
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetServiceTpl, ipSetProtocol),
 				SetType:    ipset.HashNet,
@@ -77,7 +115,7 @@ func (c *Controller) setUpIPSets() error {
 		var subnetCIDRsForDistributedGw []string
 		for _, subnet := range allSubnets {
 			// subnets under default vpc
-			if subnet.Spec.Vpc == c.config.ClusterRouter &&
+			if subnet.Spec.Vpc == w.config.ClusterRouter &&
 				(subnet.Spec.Vlan == "" || subnet.Spec.LogicalGateway) &&
 				subnet.Spec.CIDRBlock != "" &&
 				(subnet.Spec.Protocol == protocol || subnet.Spec.Protocol == utils.ProtocolDual) {
@@ -99,7 +137,7 @@ func (c *Controller) setUpIPSets() error {
 				}
 			}
 		}
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetSubnetTpl, ipSetProtocol),
 				SetType:    ipset.HashNet,
@@ -107,7 +145,7 @@ func (c *Controller) setUpIPSets() error {
 			},
 			subnetCIDRs,
 		)
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetLocalPodIPTpl, ipSetProtocol),
 				SetType:    ipset.HashIP,
@@ -115,7 +153,7 @@ func (c *Controller) setUpIPSets() error {
 			},
 			nil,
 		)
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetSubnetNatTpl, ipSetProtocol),
 				SetType:    ipset.HashNet,
@@ -123,7 +161,7 @@ func (c *Controller) setUpIPSets() error {
 			},
 			subnetCIDRsForNat,
 		)
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetSubnetDistributedGwTpl, ipSetProtocol),
 				SetType:    ipset.HashNet,
@@ -135,7 +173,7 @@ func (c *Controller) setUpIPSets() error {
 		// nodes
 		var otherNodeIPs []string
 		for _, node := range allNodes {
-			if node.Name == c.config.NodeName {
+			if node.Name == w.config.NodeName {
 				continue
 			}
 
@@ -145,7 +183,7 @@ func (c *Controller) setUpIPSets() error {
 				}
 			}
 		}
-		c.ipSetsController.AddOrUpdateIPSet(
+		w.addOrUpdateIPSet(
 			&ipset.IPSet{
 				Name:       fmt.Sprintf(consts.IPSetOtherNodeTpl, ipSetProtocol),
 				SetType:    ipset.HashNet,
@@ -158,16 +196,12 @@ func (c *Controller) setUpIPSets() error {
 	return nil
 }
 
-type IPSetsController struct {
-	ipSets ipset.Interface
-}
-
-func (c *IPSetsController) AddOrUpdateIPSet(set *ipset.IPSet, elements []string) {
-	if err := c.ipSets.CreateSet(set, true); err != nil {
+func (w *ipSetsWorker) addOrUpdateIPSet(set *ipset.IPSet, elements []string) {
+	if err := w.ipSets.CreateSet(set, true); err != nil {
 		klog.Error(err)
 		return
 	}
-	entries, err := c.ipSets.ListEntries(set.Name)
+	entries, err := w.ipSets.ListEntries(set.Name)
 	if err != nil {
 		klog.Error(err)
 		return
@@ -180,16 +214,16 @@ func (c *IPSetsController) AddOrUpdateIPSet(set *ipset.IPSet, elements []string)
 		if _, ok := entryMap[element]; ok {
 			delete(entryMap, element)
 		} else {
-			_ = c.ipSets.AddEntry(element, set, true)
+			_ = w.ipSets.AddEntry(element, set, true)
 		}
 	}
 	for entry := range entryMap {
-		_ = c.ipSets.DelEntry(entry, set.Name)
+		_ = w.ipSets.DelEntry(entry, set.Name)
 	}
 }
 
-func (c *IPSetsController) ipSetExists(name string) (bool, error) {
-	setList, err := c.ipSets.ListSets()
+func (w *ipSetsWorker) IPSetExists(name string) (bool, error) {
+	setList, err := w.ipSets.ListSets()
 	if err != nil {
 		klog.Error(err)
 		return false, err
@@ -201,8 +235,4 @@ func (c *IPSetsController) ipSetExists(name string) (bool, error) {
 	}
 
 	return false, fmt.Errorf("ipset %s not found", name)
-}
-
-func (c *Controller) ipSetExists(name string) (bool, error) {
-	return c.ipSetsController.ipSetExists(name)
 }

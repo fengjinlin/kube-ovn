@@ -20,6 +20,12 @@ func NewVSwitchClient(addr string, timeout int) (*VSwitchClient, error) {
 	monitors := []client.MonitorOption{
 		client.WithTable(&vswitch.Bridge{}),
 		client.WithTable(&vswitch.Port{}),
+		client.WithTable(&vswitch.Interface{}),
+		client.WithTable(&vswitch.Mirror{}),
+		client.WithTable(&vswitch.OpenvSwitch{}),
+		client.WithTable(&vswitch.QoS{}),
+		client.WithTable(&vswitch.Queue{}),
+		client.WithTable(&vswitch.SSL{}),
 	}
 
 	cli, err := ovsclient.NewOvsDbClient(ovsclient.VSWITCH, addr, dbModel, monitors)

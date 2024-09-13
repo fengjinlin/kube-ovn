@@ -5,43 +5,88 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-iptables/iptables"
+	"k8s.io/apimachinery/pkg/util/wait"
+	coreinformer "k8s.io/client-go/informers/core/v1"
+	corelister "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
 
+	ovninformer "github.com/fengjinlin/kube-ovn/pkg/client/informers/externalversions/kubeovn/v1"
+	ovnlister "github.com/fengjinlin/kube-ovn/pkg/client/listers/kubeovn/v1"
 	"github.com/fengjinlin/kube-ovn/pkg/consts"
 	"github.com/fengjinlin/kube-ovn/pkg/utils"
 )
 
-func (c *Controller) initIPTables() error {
-
-	c.iptables = make(map[string]*iptables.IPTables)
-
-	if c.protocol == utils.ProtocolIPv4 || c.protocol == utils.ProtocolDual {
-		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
-		if err != nil {
-			return err
-		}
-		c.iptables[utils.ProtocolIPv4] = ipt
-	}
-
-	if c.protocol == utils.ProtocolIPv6 || c.protocol == utils.ProtocolDual {
-		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
-		if err != nil {
-			return err
-		}
-		c.iptables[utils.ProtocolIPv6] = ipt
-	}
-
-	return nil
+type IPTablesWorker interface {
+	Run(stopCh <-chan struct{})
 }
 
-func (c *Controller) setUpIPTables() error {
+func NewIPTablesWorker(config *Configuration,
+	subnetInformer ovninformer.SubnetInformer,
+	nodeInformer coreinformer.NodeInformer,
+	protocol string,
+	ipSetsMgr IPSetsWorker) (IPTablesWorker, error) {
+
+	m := &iptablesWorker{
+		config:        config,
+		subnetsLister: subnetInformer.Lister(),
+		nodesLister:   nodeInformer.Lister(),
+		protocol:      protocol,
+		ipSetsMgr:     ipSetsMgr,
+
+		iptables: make(map[string]*iptables.IPTables),
+	}
+
+	if m.protocol == utils.ProtocolIPv4 || m.protocol == utils.ProtocolDual {
+		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv4)
+		if err != nil {
+			return nil, err
+		}
+		m.iptables[utils.ProtocolIPv4] = ipt
+	}
+	if m.protocol == utils.ProtocolIPv6 || m.protocol == utils.ProtocolDual {
+		ipt, err := iptables.NewWithProtocol(iptables.ProtocolIPv6)
+		if err != nil {
+			return nil, err
+		}
+		m.iptables[utils.ProtocolIPv6] = ipt
+	}
+
+	return m, nil
+}
+
+type iptablesWorker struct {
+	config *Configuration
+
+	subnetsLister ovnlister.SubnetLister
+	nodesLister   corelister.NodeLister
+
+	protocol string
+
+	ipSetsMgr IPSetsWorker
+
+	iptables map[string]*iptables.IPTables
+}
+
+func (w *iptablesWorker) Run(stopCh <-chan struct{}) {
+	go wait.Until(func() {
+		if err := w.setUpIPTables(); err != nil {
+			klog.Error("failed to setup iptables", err)
+		}
+	}, 3*time.Second, stopCh)
+
+	<-stopCh
+	klog.Info("stopping iptables manager")
+}
+
+func (w *iptablesWorker) setUpIPTables() error {
 	klog.V(3).Infoln("start to set up iptables")
 
-	node, err := c.nodesLister.Get(c.config.NodeName)
+	node, err := w.nodesLister.Get(w.config.NodeName)
 	if err != nil {
-		klog.Errorf("failed to get node %s, %v", c.config.NodeName, err)
+		klog.Errorf("failed to get node %s, %v", w.config.NodeName, err)
 		return err
 	}
 	v4NodeIP, v6NodeIP := utils.GetNodeInternalIP(node)
@@ -151,7 +196,7 @@ func (c *Controller) setUpIPTables() error {
 		"{OTHER-NODE}":            consts.IPSetOtherNodeTpl,
 	}
 
-	for protocol, ipt := range c.iptables {
+	for protocol, ipt := range w.iptables {
 		natOvnPreRoutingRules := make([]utils.IPTableRule, len(natOvnPreRoutingRulesTpl))
 		natOvnPostRoutingRules := make([]utils.IPTableRule, len(natOvnPostRoutingRulesTpl))
 		natOvnMasqueradeRules := make([]utils.IPTableRule, len(natOvnMasqueradeRulesTpl))
@@ -179,7 +224,7 @@ func (c *Controller) setUpIPTables() error {
 		}
 
 		kubeProxyIPSet := fmt.Sprintf("KUBE-%sCLUSTER-IP", ipSetProtocol)
-		exists, err := c.ipSetExists(kubeProxyIPSet)
+		exists, err := w.ipSetsMgr.IPSetExists(kubeProxyIPSet)
 		if err != nil {
 			klog.Errorf("failed to check existence of ipset %s: %v", kubeProxyIPSet, err)
 			return err
@@ -206,7 +251,7 @@ func (c *Controller) setUpIPTables() error {
 
 			for _, p := range [...]string{"tcp", "udp"} {
 				nodePortIPSet := fmt.Sprintf("KUBE-%sNODE-PORT-LOCAL-%s", ipSetProtocol, strings.ToUpper(p))
-				exists, err := c.ipSetExists(nodePortIPSet)
+				exists, err := w.ipSetsMgr.IPSetExists(nodePortIPSet)
 				if err != nil {
 					klog.Errorf("failed to check existence of ipset %s: %v", nodePortIPSet, err)
 					return err
@@ -241,25 +286,25 @@ func (c *Controller) setUpIPTables() error {
 			for k, v := range matchSetMap {
 				rule.Rule = strings.ReplaceAll(rule.Rule, k, v)
 			}
-			if err = c.createIPTablesRule(ipt, rule); err != nil {
+			if err = w.createIPTablesRule(ipt, rule); err != nil {
 				klog.Errorf(`failed to create iptables rule "%s": %v`, rule.Rule, err)
 				return err
 			}
 		}
 
-		if err = c.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnPreRouting, consts.ChainPreRouting, natOvnPreRoutingRules, matchSetMap); err != nil {
+		if err = w.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnPreRouting, consts.ChainPreRouting, natOvnPreRoutingRules, matchSetMap); err != nil {
 			klog.Errorf("failed to update chain %s/%s: %v", consts.TableNat, consts.ChainOvnPreRouting, err)
 			return err
 		}
-		if err = c.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnMasquerade, "", natOvnMasqueradeRules, matchSetMap); err != nil {
+		if err = w.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnMasquerade, "", natOvnMasqueradeRules, matchSetMap); err != nil {
 			klog.Errorf("failed to update chain %s/%s: %v", consts.TableNat, consts.ChainOvnMasquerade, err)
 			return err
 		}
-		if err = c.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnPostRouting, consts.ChainPostRouting, natOvnPostRoutingRules, matchSetMap); err != nil {
+		if err = w.updateIptablesChain(ipt, consts.TableNat, consts.ChainOvnPostRouting, consts.ChainPostRouting, natOvnPostRoutingRules, matchSetMap); err != nil {
 			klog.Errorf("failed to update chain %s/%s: %v", consts.TableNat, consts.ChainOvnPostRouting, err)
 			return err
 		}
-		if err = c.updateIptablesChain(ipt, consts.TableMangle, consts.ChainOvnPostRouting, consts.ChainPostRouting, mangleOvnPostRoutingRules, matchSetMap); err != nil {
+		if err = w.updateIptablesChain(ipt, consts.TableMangle, consts.ChainOvnPostRouting, consts.ChainPostRouting, mangleOvnPostRoutingRules, matchSetMap); err != nil {
 			klog.Errorf("failed to update chain %s/%s: %v", consts.TableMangle, consts.ChainOvnPostRouting, err)
 			return err
 		}
@@ -268,7 +313,7 @@ func (c *Controller) setUpIPTables() error {
 	return nil
 }
 
-func (c *Controller) updateIptablesChain(ipt *iptables.IPTables, table, chain, parentChain string, rules []utils.IPTableRule, matchSetMap map[string]string) error {
+func (w *iptablesWorker) updateIptablesChain(ipt *iptables.IPTables, table, chain, parentChain string, rules []utils.IPTableRule, matchSetMap map[string]string) error {
 	ok, err := ipt.ChainExists(table, chain)
 	if err != nil {
 		klog.Errorf("failed to check existence of iptables chain %s in table %s: %v", chain, table, err)
@@ -288,7 +333,7 @@ func (c *Controller) updateIptablesChain(ipt *iptables.IPTables, table, chain, p
 			Chain: parentChain,
 			Rule:  fmt.Sprintf(`-m comment --comment "%s" -j %s`, comment, chain),
 		}
-		if err = c.createIPTablesRule(ipt, rule); err != nil {
+		if err = w.createIPTablesRule(ipt, rule); err != nil {
 			klog.Errorf("failed to create iptables rule: %v", err)
 			return err
 		}
@@ -337,7 +382,7 @@ func (c *Controller) updateIptablesChain(ipt *iptables.IPTables, table, chain, p
 	return nil
 }
 
-func (c *Controller) createIPTablesRule(ipt *iptables.IPTables, rule utils.IPTableRule) error {
+func (w *iptablesWorker) createIPTablesRule(ipt *iptables.IPTables, rule utils.IPTableRule) error {
 	ruleArr := utils.DoubleQuotedFields(rule.Rule)
 	exists, err := ipt.Exists(rule.Table, rule.Chain, ruleArr...)
 	if err != nil {

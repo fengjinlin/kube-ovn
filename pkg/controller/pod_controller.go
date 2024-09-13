@@ -3,12 +3,13 @@ package controller
 import (
 	"context"
 	"fmt"
-	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/utils/ptr"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -65,11 +66,6 @@ func (r *podController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		logger.Info("pod is host network, not managed by kube-ovn")
 		return ctrl.Result{}, nil
 	}
-
-	//if pod.Annotations != nil && pod.Annotations[consts.AnnotationRouted] == "true" {
-	//	logger.Info("pod has already been routed, not need to reconcile")
-	//	return ctrl.Result{}, nil
-	//}
 
 	if pod.DeletionTimestamp.IsZero() {
 		if !utils.ContainsString(pod.Finalizers, consts.FinalizerController) {
@@ -322,7 +318,7 @@ func (r *podController) reconcilePodNetwork(ctx context.Context, pod *corev1.Pod
 	for _, podNet := range targetPodNets {
 		// 1. allocate
 		{
-			if !isPodAllocated(pod, podNet.providerName) || isSubnetCidrChanged(pod, podNet) {
+			if !isPodAllocated(pod, podNet.providerName) {
 				v4IP, v6IP, mac, subnet, err := r.acquireAddress(ctx, pod, podNet)
 				if err != nil {
 					logger.Error(err, "failed to acquire address for pod", "subnet", podNet.subnet.Name)
@@ -506,8 +502,7 @@ func (r *podController) acquireAddress(ctx context.Context, pod *corev1.Pod, pod
 			macStr = &mac
 		}
 	} else {
-		macStr = new(string)
-		*macStr = ""
+		macStr = ptr.To("")
 	}
 
 	portName := translator.PodNameToPortName(podName, pod.Namespace, podNet.providerName)
@@ -566,18 +561,6 @@ func isPodAllocated(pod *corev1.Pod, provider string) bool {
 		allocated = pod.Annotations[fmt.Sprintf(consts.AnnotationAllocatedTemplate, provider)] == "true"
 	}
 	return allocated
-}
-
-func isSubnetCidrChanged(pod *corev1.Pod, podNet *ovnNet) bool {
-	if len(pod.Annotations) == 0 || podNet.subnet == nil {
-		return false
-	}
-
-	key := consts.AnnotationCidr
-	if podNet.providerName != "" {
-		key = fmt.Sprintf(consts.AnnotationCidrTemplate, podNet.providerName)
-	}
-	return pod.Annotations[key] != podNet.subnet.Spec.CIDRBlock
 }
 
 func isPodRouted(pod *corev1.Pod, provider string) bool {
