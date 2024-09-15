@@ -171,6 +171,7 @@ func (c *controller) StartWorks(stopCh <-chan struct{}) {
 	go c.iptablesWorker.Run(stopCh)
 	go c.subnetWorker.Run(stopCh)
 	go c.cniServer.Run(stopCh)
+	go c.ovsWorker.Run(stopCh)
 
 	mux := http.NewServeMux()
 	if c.config.EnableMetrics {

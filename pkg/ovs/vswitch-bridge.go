@@ -45,7 +45,7 @@ func (c *VSwitchClient) GetBridge(brName string, ignoreNotFound bool) (*vswitch.
 	return &brs[0], nil
 }
 
-func (c *VSwitchClient) bridgeUpdateOp(brName string, mutationFunc ...func(ls *vswitch.Bridge) *model.Mutation) ([]ovsdb.Operation, error) {
+func (c *VSwitchClient) updateBridgeOp(brName string, mutationFunc ...func(ls *vswitch.Bridge) *model.Mutation) ([]ovsdb.Operation, error) {
 	if len(mutationFunc) == 0 {
 		return nil, nil
 	}

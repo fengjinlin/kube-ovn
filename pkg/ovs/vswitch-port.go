@@ -63,7 +63,7 @@ func (c *VSwitchClient) CreatePortOp(brName, portName, ifaceName, ifaceType stri
 	}
 	ifaceCreateOps, err := c.Create(iface)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create interface %q: %v", ifaceName, err)
+		return nil, fmt.Errorf("generate operations for creating interface %q: %v", ifaceName, err)
 	}
 
 	port := &vswitch.Port{
@@ -73,7 +73,7 @@ func (c *VSwitchClient) CreatePortOp(brName, portName, ifaceName, ifaceType stri
 	}
 	portCreateOps, err := c.Create(port)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create port %q: %v", portName, err)
+		return nil, fmt.Errorf("generate operations for creating port %q: %v", portName, err)
 	}
 
 	brUpdateMutation := func(br *vswitch.Bridge) *model.Mutation {
@@ -83,9 +83,9 @@ func (c *VSwitchClient) CreatePortOp(brName, portName, ifaceName, ifaceType stri
 			Value:   []string{port.UUID},
 		}
 	}
-	brUpdateOps, err := c.bridgeUpdateOp(brName, brUpdateMutation)
+	brUpdateOps, err := c.updateBridgeOp(brName, brUpdateMutation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to update bridge %q: %v", brName, err)
+		return nil, fmt.Errorf("generate operations for updating bridge %q: %v", brName, err)
 	}
 
 	ops := make([]ovsdb.Operation, 0, len(ifaceCreateOps)+len(portCreateOps)+len(brUpdateOps))
@@ -120,7 +120,7 @@ func (c *VSwitchClient) GetPort(portName string, ignoreNotFound bool) (*vswitch.
 	return &portList[0], nil
 }
 
-func (c *VSwitchClient) portUpdateOp(portName string, mutationFunc ...func(ls *vswitch.Port) *model.Mutation) ([]ovsdb.Operation, error) {
+func (c *VSwitchClient) updatePortOp(portName string, mutationFunc ...func(ls *vswitch.Port) *model.Mutation) ([]ovsdb.Operation, error) {
 	if len(mutationFunc) == 0 {
 		return nil, nil
 	}
@@ -158,7 +158,7 @@ func (c *VSwitchClient) DeletePort(brName, portName string) error {
 			Value:   []string{port.UUID},
 		}
 	}
-	ops, err := c.bridgeUpdateOp(brName, brUpdateMutation)
+	ops, err := c.updateBridgeOp(brName, brUpdateMutation)
 	if err != nil {
 		return err
 	}

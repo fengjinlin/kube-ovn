@@ -2,7 +2,10 @@ package daemon
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"os"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	coreinformer "k8s.io/client-go/informers/core/v1"
@@ -16,6 +19,8 @@ import (
 
 type OvsWorker interface {
 	InitOvs() error
+
+	Run(stopCh <-chan struct{})
 }
 
 func NewOvsWorker(config *Configuration,
@@ -31,6 +36,35 @@ type ovsWorker struct {
 	config *Configuration
 
 	nodeLister corelister.NodeLister
+}
+
+func (w *ovsWorker) Run(stopCh <-chan struct{}) {
+	go wait.Until(w.cleanLostInterface, time.Minute, stopCh)
+
+	<-stopCh
+	klog.Info("stopping ovs worker")
+}
+
+// cleanLostInterface will clean up related ovs port, interface and qos
+// When reboot node, the ovs internal interface will be deleted.
+func (w *ovsWorker) cleanLostInterface() {
+	klog.Info("cleaning lost ovs interface")
+	lostIfaceFilter := func(iface *vswitch.Interface) bool {
+		return iface.Ofport != nil && *iface.Ofport == -1 &&
+			len(iface.ExternalIDs) > 0 && iface.ExternalIDs[consts.ExternalIDsKeyPodNS] != "" &&
+			iface.Error != nil && strings.Contains(*iface.Error, "No such device")
+	}
+	lostIfaceList, err := w.config.vSwitchClient.ListInterfaceByFilter(lostIfaceFilter)
+	if err != nil {
+		klog.Errorf("list lost interface error: %v", err)
+		return
+	}
+	klog.Infof("cleaning lost ovs interface, found %d", len(lostIfaceList))
+	for _, iface := range lostIfaceList {
+		if err = w.config.vSwitchClient.DeletePort(consts.DefaultBridgeName, iface.Name); err != nil {
+			klog.Errorf("failed to delete lost port %s: %v", iface.Name, err)
+		}
+	}
 }
 
 func (w *ovsWorker) InitOvs() error {

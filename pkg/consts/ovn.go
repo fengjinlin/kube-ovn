@@ -74,9 +74,14 @@ const (
 	ExternalIDsKeyLogicalSwitch = "ls"
 	ExternalIDsKeyNetworkPolicy = "np"
 	ExternalIDsKeyPod           = "pod"
+	ExternalIDsKeyPodNS         = "pod-ns"
+	ExternalIDsKeyPodNetNS      = "pod-net-ns"
 	ExternalIDsKeySubnet        = "subnet"
 	ExternalIDsKeyNode          = "node"
 	ExternalIDsKeyKind          = "kind"
+
+	ExternalIDsIfaceID = "iface-id"
+	ExternalIDsIP      = "ip"
 
 	ExternalIDsKeyServiceName = "svc-%s"
 )

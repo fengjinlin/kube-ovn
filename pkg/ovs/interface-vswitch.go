@@ -1,14 +1,13 @@
 package ovs
 
 import (
-	"github.com/ovn-org/libovsdb/ovsdb"
-
 	"github.com/fengjinlin/kube-ovn/pkg/ovsdb/vswitch"
 )
 
 type VSwitchClientInterface interface {
 	Bridge
 	Port
+	Interface
 	OpenVSwitch
 
 	Common
@@ -27,7 +26,8 @@ type Port interface {
 }
 
 type Interface interface {
-	CreateInterfaceOp(ifaceName, ifaceType string, ifaceExternalIds map[string]string) ([]ovsdb.Operation, error)
+	CleanDuplicateInterface(ifaceID, ifaceName string) error
+	ListInterfaceByFilter(filter func(iface *vswitch.Interface) bool) ([]*vswitch.Interface, error)
 }
 
 type OpenVSwitch interface {

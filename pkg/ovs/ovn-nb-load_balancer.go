@@ -115,12 +115,16 @@ func (c *OvnNbClient) MutateLoadBalancerOp(ctx context.Context, lbName string, m
 		}
 	}
 
-	ops, err := c.ovsDbClient.Where(lb).Mutate(lb, mutations...)
-	if err != nil {
-		return nil, fmt.Errorf("generate operations for mutating load balancer %s: %v", lbName, err)
+	if len(mutations) > 0 {
+		ops, err := c.ovsDbClient.Where(lb).Mutate(lb, mutations...)
+		if err != nil {
+			return nil, fmt.Errorf("generate operations for mutating load balancer %s: %v", lbName, err)
+		}
+
+		return ops, nil
 	}
 
-	return ops, nil
+	return nil, nil
 }
 
 func (c *OvnNbClient) AddLoadBalancerVip(ctx context.Context, lbName, vip string, backends ...string) error {
@@ -155,6 +159,10 @@ func (c *OvnNbClient) AddLoadBalancerVip(ctx context.Context, lbName, vip string
 
 	if ops, err = c.MutateLoadBalancerOp(ctx, lbName, mutationFunc); err != nil {
 		return fmt.Errorf("generate operations for adding vip `%s` to load balancer `%s`: %v", vip, lbName, err)
+	}
+
+	if len(ops) == 0 {
+		return nil
 	}
 
 	if err = c.Transact(ctx, "lb-vip-add", ops); err != nil {

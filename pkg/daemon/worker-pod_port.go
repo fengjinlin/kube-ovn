@@ -107,17 +107,20 @@ func (pp *PodPort) createPodPort() error {
 		netNS    = pp.NetNS
 		ipAddr   = utils.GetIPWithoutMask(pp.IPAddr)
 	)
+
 	ifaceID := translator.PodNameToPortName(podName, podNS, provider)
-	//ifaceID := ovs.PodNameToPortName(podName, podNamespace, provider)
-	//ovs.CleanDuplicatePort(ifaceID, hostNicName)
-	// Add veth pair host end to ovs port
+	if err = pp.VSwitchClient.CleanDuplicateInterface(ifaceID, pp.hostNicName); err != nil {
+		klog.Errorf("failed to clean duplicate port: %v", err)
+		return err
+	}
+	// Add veth pair host endpoint to ovs port
 	externalIds := map[string]string{
-		"iface-id":      ifaceID,
-		"vendor":        consts.CniVendorName,
-		"pod_name":      podName,
-		"pod_namespace": podNS,
-		"ip":            ipAddr,
-		"pod_net_ns":    netNS,
+		consts.ExternalIDsIfaceID:     ifaceID,
+		consts.ExternalIDsKeyVendor:   consts.CniVendorName,
+		consts.ExternalIDsKeyPod:      podName,
+		consts.ExternalIDsKeyPodNS:    podNS,
+		consts.ExternalIDsIP:          ipAddr,
+		consts.ExternalIDsKeyPodNetNS: netNS,
 	}
 	err = pp.VSwitchClient.CreatePort(consts.DefaultBridgeName, pp.hostNicName, pp.hostNicName, "", externalIds)
 	if err != nil {
