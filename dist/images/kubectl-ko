@@ -483,7 +483,7 @@ xxctl(){
   subcommand="$1"; shift
   nodeName="$1"; shift
   kubectl get no "$nodeName" > /dev/null
-  ovsPod=$(kubectl get pod -n $KUBE_OVN_NS -l app=ovs -o 'jsonpath={.items[?(@.spec.nodeName=="'$nodeName'")].metadata.name}')
+  ovsPod=$(kubectl get pod -n $KUBE_OVN_NS -l app=ovn-ovs -o 'jsonpath={.items[?(@.spec.nodeName=="'$nodeName'")].metadata.name}')
   if [ -z "$ovsPod" ]; then
     echo "ovs pod  doesn't exist on node $nodeName"
     exit 1
@@ -1177,7 +1177,7 @@ log_kube_ovn(){
 log_ovn_ovs(){
   component_param=$1
   echo "Collecting $component_param logging files"
-  podNames=`kubectl get pod -n kube-system -l app=ovs -o 'jsonpath={.items[*].metadata.name}'`
+  podNames=`kubectl get pod -n kube-system -l app=ovn-ovs -o 'jsonpath={.items[*].metadata.name}'`
   for pod in $podNames; do
     nodeName=$(kubectl get pod "$pod" -n kube-system -o jsonpath={.spec.nodeName})
     mkdir -p ./kubectl-ko-log/$nodeName/$component_param
@@ -1189,7 +1189,7 @@ log_linux(){
   component_param=$1
   sub_component_param=$2
   echo "Collecting $component_param $sub_component_param files"
-  podNames=`kubectl get pod -n kube-system -l app=ovs -o 'jsonpath={.items[*].metadata.name}'`
+  podNames=`kubectl get pod -n kube-system -l app=ovn-ovs -o 'jsonpath={.items[*].metadata.name}'`
   for pod in $podNames; do
     nodeName=$(kubectl get pod "$pod" -n kube-system -o jsonpath={.spec.nodeName})
     mkdir -p ./kubectl-ko-log/$nodeName/$component_param
