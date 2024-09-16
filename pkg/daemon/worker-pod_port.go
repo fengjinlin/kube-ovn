@@ -13,12 +13,12 @@ import (
 	"github.com/fengjinlin/kube-ovn/pkg/cni/request"
 	"github.com/fengjinlin/kube-ovn/pkg/consts"
 	"github.com/fengjinlin/kube-ovn/pkg/ovs"
-	"github.com/fengjinlin/kube-ovn/pkg/translator"
 	"github.com/fengjinlin/kube-ovn/pkg/utils"
 )
 
 type PodPort struct {
 	VSwitchClient ovs.VSwitchClientInterface
+	OvsWorker     OvsWorker
 
 	PodName string
 	PodNS   string
@@ -31,7 +31,8 @@ type PodPort struct {
 	ContainerID string
 	VfDriver    string
 
-	IfName           string
+	IfaceName        string
+	IfaceID          string
 	IPAddr           string
 	Mac              string
 	MTU              int
@@ -86,9 +87,9 @@ func (pp *PodPort) Install() ([]request.Route, error) {
 		return nil, fmt.Errorf("invalid port type: %s", pp.PortType)
 	}
 
-	//if err = ovs.SetInterfaceBandwidth(podName, podNamespace, ifaceID, egress, ingress); err != nil {
-	//	return nil, err
-	//}
+	if err = pp.OvsWorker.SetInterfaceBandwidth(pp.PodName, pp.PodNS, pp.IfaceID, pp.EgressRate, pp.IngressRate); err != nil {
+		return nil, err
+	}
 
 	//if err = ovs.SetNetemQos(podName, podNamespace, ifaceID, latency, limit, loss, jitter); err != nil {
 	//	return nil, err
@@ -101,25 +102,23 @@ func (pp *PodPort) createPodPort() error {
 	var (
 		err error
 
-		podName  = pp.PodName
-		podNS    = pp.PodNS
-		provider = pp.Provider
-		netNS    = pp.NetNS
-		ipAddr   = utils.GetIPWithoutMask(pp.IPAddr)
+		podName = pp.PodName
+		podNS   = pp.PodNS
+		netNS   = pp.NetNS
+		ipAddr  = utils.GetIPWithoutMask(pp.IPAddr)
 	)
 
-	ifaceID := translator.PodNameToPortName(podName, podNS, provider)
-	if err = pp.VSwitchClient.CleanDuplicateInterface(ifaceID, pp.hostNicName); err != nil {
+	if err = pp.VSwitchClient.CleanDuplicateInterface(pp.IfaceID, pp.hostNicName); err != nil {
 		klog.Errorf("failed to clean duplicate port: %v", err)
 		return err
 	}
 	// Add veth pair host endpoint to ovs port
 	externalIds := map[string]string{
-		consts.ExternalIDsIfaceID:     ifaceID,
+		consts.ExternalIDsKeyIfaceID:  pp.IfaceID,
 		consts.ExternalIDsKeyVendor:   consts.CniVendorName,
 		consts.ExternalIDsKeyPod:      podName,
 		consts.ExternalIDsKeyPodNS:    podNS,
-		consts.ExternalIDsIP:          ipAddr,
+		consts.ExternalIDsKeyIP:       ipAddr,
 		consts.ExternalIDsKeyPodNetNS: netNS,
 	}
 	err = pp.VSwitchClient.CreatePort(consts.DefaultBridgeName, pp.hostNicName, pp.hostNicName, "", externalIds)
@@ -157,7 +156,7 @@ func (pp *PodPort) configureContainerNic() ([]request.Route, error) {
 
 		nicName = pp.containerNicName
 		nicType = pp.PortType
-		ifName  = pp.IfName
+		ifName  = pp.IfaceName
 		ipAddr  = pp.IPAddr
 
 		netNS ns.NetNS
@@ -336,7 +335,7 @@ func (pp *PodPort) setupVethPair() error {
 func (pp *PodPort) generateNicName() {
 	var (
 		containerID = pp.ContainerID
-		ifName      = pp.IfName
+		ifName      = pp.IfaceName
 
 		hostNicName, containerNicName string
 	)

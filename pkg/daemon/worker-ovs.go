@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
+	"github.com/ovn-org/libovsdb/ovsdb"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +22,8 @@ import (
 
 type OvsWorker interface {
 	InitOvs() error
+
+	SetInterfaceBandwidth(podName, podNS, ifaceID, ingressRate, egressRate string) error
 
 	Run(stopCh <-chan struct{})
 }
@@ -177,4 +182,172 @@ func getEncapIP(node *corev1.Node) string {
 		return ipv4
 	}
 	return ipv6
+}
+
+func (w *ovsWorker) SetInterfaceBandwidth(podName, podNS, ifaceID, ingress, egress string) error {
+	var (
+		vSwitchClient = w.config.vSwitchClient
+	)
+	ifaceList, err := vSwitchClient.ListInterfaceByFilter(func(iface *vswitch.Interface) bool {
+		return len(iface.ExternalIDs) > 0 && iface.ExternalIDs[consts.ExternalIDsKeyIfaceID] == ifaceID
+	})
+	if err != nil {
+		klog.Errorf("failed to list interface with iface-id %s: %v", ifaceID, err)
+		return err
+	}
+
+	ingressKPS, _ := strconv.Atoi(ingress)
+	egressKPS, _ := strconv.Atoi(egress)
+	egressBPS := egressKPS * 1000
+	egressRate := fmt.Sprintf("%d", egressBPS)
+	klog.Infof("set iface bandwidth: ifaceID: %s, ingressKPS: %d, egressBPS: %d, found: %d", ifaceID, ingressKPS, egressBPS, len(ifaceList))
+	var (
+		externalIDs = map[string]string{
+			consts.ExternalIDsKeyIfaceID: ifaceID,
+			consts.ExternalIDsKeyPod:     podName,
+			consts.ExternalIDsKeyPodNS:   podNS,
+		}
+	)
+
+	for _, iface := range ifaceList {
+		// ingress
+		iface.IngressPolicingRate = ingressKPS
+		iface.IngressPolicingBurst = ingressKPS * 8 / 10
+		if err = vSwitchClient.UpdateInterface(iface, &iface.IngressPolicingRate, &iface.IngressPolicingBurst); err != nil {
+			klog.Errorf("failed to update interface ingress rate")
+		}
+
+		// egress
+		if egressBPS > 0 {
+			// create htb qos queue
+			queues, err := vSwitchClient.ListQueueByFilter(func(queue *vswitch.Queue) bool {
+				return queue.ExternalIDs != nil && queue.ExternalIDs[consts.ExternalIDsKeyIfaceID] == ifaceID
+			})
+			if err != nil {
+				klog.Errorf("failed to list queues: %v", err)
+				return err
+			}
+			if len(queues) > 0 { // queue exists
+				queue := queues[0]
+				if queue.OtherConfig[consts.OtherConfigKeyMaxRate] != egressRate {
+					queue.OtherConfig[consts.OtherConfigKeyMaxRate] = egressRate
+					if err = vSwitchClient.UpdateQueue(queue, &queue.OtherConfig); err != nil {
+						klog.Errorf("failed to update queue egress: %v", err)
+						return err
+					}
+				}
+			} else { // queue not exists
+				// create queue
+				queue := &vswitch.Queue{
+					UUID: vSwitchClient.NamedUUID(),
+					OtherConfig: map[string]string{
+						consts.OtherConfigKeyMaxRate: egressRate,
+					},
+					ExternalIDs: externalIDs,
+				}
+				queueCreateOps, err := vSwitchClient.AddQueueOps(queue)
+				if err != nil {
+					klog.Errorf("failed to generate operations for adding queue: %v", err)
+					return err
+				}
+				qos := &vswitch.QoS{
+					UUID: vSwitchClient.NamedUUID(),
+					Type: consts.QosTypeHtb,
+					Queues: map[int]string{
+						0: queue.UUID,
+					},
+					ExternalIDs: externalIDs,
+				}
+				qosCreateOps, err := vSwitchClient.AddQosOps(qos)
+				if err != nil {
+					klog.Errorf("failed to generate operations for adding qos: %v", err)
+					return err
+				}
+				port, err := vSwitchClient.GetPort(iface.Name, false)
+				if err != nil {
+					klog.Errorf("failed to get port %s: %v", iface.Name, err)
+					return err
+				}
+				port.QOS = &qos.UUID
+				portUpdateOps, err := vSwitchClient.UpdatePortOps(port, &port.QOS)
+				if err != nil {
+					klog.Errorf("failed to generate operations for updating port %s qos: %v", port.Name, err)
+					return err
+				}
+
+				ops := make([]ovsdb.Operation, 0, len(queueCreateOps)+len(qosCreateOps)+len(portUpdateOps))
+				ops = append(ops, queueCreateOps...)
+				ops = append(ops, qosCreateOps...)
+				ops = append(ops, portUpdateOps...)
+				if err = vSwitchClient.Transact(context.TODO(), "port-qos-add", ops); err != nil {
+					klog.Errorf("failed to add port qos: %v", err)
+					return err
+				}
+			}
+
+		} else { // remove egress qos
+			qosList, err := vSwitchClient.ListQosByFilter(func(qos *vswitch.QoS) bool {
+				return qos.ExternalIDs != nil && qos.ExternalIDs[consts.ExternalIDsKeyIfaceID] == ifaceID
+			})
+			if err != nil {
+				klog.Errorf("failed to list qos: %v", err)
+				return err
+			}
+			if len(qosList) > 0 {
+				for _, qos := range qosList {
+					if qos.Type != consts.QosTypeHtb {
+						continue
+					}
+
+					queue, err := vSwitchClient.GetQueueByUUID(qos.Queues[0])
+					if err != nil {
+						klog.Errorf("failed to get queue by uuid %s: %v", qos.Queues[0], err)
+						return err
+					}
+					delete(queue.OtherConfig, consts.OtherConfigKeyMaxRate)
+					if len(queue.OtherConfig) > 0 {
+						if err = vSwitchClient.UpdateQueue(queue, &queue.OtherConfig); err != nil {
+							klog.Errorf("failed to delete qos max-rate: %v", err)
+							return err
+						}
+					} else { // clear port qos, delete qos, queue
+						// clear port qos
+						port, err := vSwitchClient.GetPort(iface.Name, false)
+						if err != nil {
+							klog.Errorf("failed to get port %s: %v", iface.Name, err)
+							return err
+						}
+						port.QOS = nil
+						portUpdateOps, err := vSwitchClient.UpdatePortOps(port, &port.QOS)
+						if err != nil {
+							klog.Errorf("failed to generate operations for updating port %s qos: %v", port.Name, err)
+							return err
+						}
+						// delete qos
+						qosDelOps, err := vSwitchClient.DeleteQosOps(qos)
+						if err != nil {
+							klog.Errorf("failed to generate operations for deleting qos: %v", err)
+							return err
+						}
+						// delete queue
+						queueDelOps, err := vSwitchClient.DeleteQueueOps(queue)
+						if err != nil {
+							klog.Errorf("failed to generate operations for deleting queue: %v", err)
+							return err
+						}
+
+						ops := make([]ovsdb.Operation, 0, len(portUpdateOps)+len(qosDelOps)+len(queueDelOps))
+						ops = append(ops, portUpdateOps...)
+						ops = append(ops, qosDelOps...)
+						ops = append(ops, queueDelOps...)
+						if err = vSwitchClient.Transact(context.TODO(), "port-qos-del", ops); err != nil {
+							klog.Errorf("failed to delete port qos: %v", err)
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }

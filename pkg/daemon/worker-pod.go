@@ -2,6 +2,10 @@ package daemon
 
 import (
 	"fmt"
+	"github.com/fengjinlin/kube-ovn/pkg/translator"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/util/workqueue"
 	"strings"
 	"time"
 
@@ -21,36 +25,63 @@ import (
 type PodWorker interface {
 	Run(stopCh <-chan struct{})
 
-	HandleAddPodPort(req *request.CniRequest) (*request.CniResponse, error)
-	HandleDelPodPort(req *request.CniRequest) (*request.CniResponse, error)
+	HandleCniAddPodPort(req *request.CniRequest) (*request.CniResponse, error)
+	HandleCniDelPodPort(req *request.CniRequest) (*request.CniResponse, error)
 }
 
 func NewPodWorker(config *Configuration,
 	subnetInformer ovninformer.SubnetInformer,
-	podInformer coreinformer.PodInformer) (PodWorker, error) {
+	podInformer coreinformer.PodInformer,
+	ovsWorker OvsWorker) (PodWorker, error) {
 
-	return &podWorker{
+	w := &podWorker{
 		config:         config,
 		subnetInformer: subnetInformer,
 		subnetLister:   subnetInformer.Lister(),
 		podInformer:    podInformer,
 		podLister:      podInformer.Lister(),
-	}, nil
+		ovsWorker:      ovsWorker,
+	}
+
+	w.podQueue = workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(),
+		workqueue.RateLimitingQueueConfig{Name: "Pod"})
+
+	if _, err := podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			if key, err := cache.MetaNamespaceKeyFunc(newObj); err != nil {
+				utilruntime.HandleError(err)
+				return
+			} else {
+				w.podQueue.Add(key)
+			}
+		},
+	}); err != nil {
+		return nil, err
+	}
+
+	return w, nil
 }
 
 type podWorker struct {
-	config *Configuration
+	config    *Configuration
+	ovsWorker OvsWorker
 
 	subnetInformer ovninformer.SubnetInformer
 	subnetLister   ovnlister.SubnetLister
 	podInformer    coreinformer.PodInformer
 	podLister      corelister.PodLister
+
+	podQueue workqueue.RateLimitingInterface
 }
 
 func (w *podWorker) Run(stopCh <-chan struct{}) {
+	go w.runPodWorker()
+
+	<-stopCh
+	klog.Info("stopping pod worker")
 }
 
-func (w *podWorker) HandleAddPodPort(req *request.CniRequest) (*request.CniResponse, error) {
+func (w *podWorker) HandleCniAddPodPort(req *request.CniRequest) (*request.CniResponse, error) {
 	var (
 		err error
 	)
@@ -190,6 +221,7 @@ func (w *podWorker) HandleAddPodPort(req *request.CniRequest) (*request.CniRespo
 		klog.Infof("create container interface %s mac %s, ip %s, cidr %s, gw %s, custom routes %v", ifName, macAddr, ipAddr, cidr, gw, routes)
 		podPort := PodPort{
 			VSwitchClient: w.config.vSwitchClient,
+			OvsWorker:     w.ovsWorker,
 
 			PodName:            req.PodName,
 			PodNS:              req.PodNamespace,
@@ -198,7 +230,8 @@ func (w *podWorker) HandleAddPodPort(req *request.CniRequest) (*request.CniRespo
 			NetNS:              req.NetNs,
 			ContainerID:        req.ContainerID,
 			VfDriver:           req.VfDriver,
-			IfName:             ifName,
+			IfaceName:          ifName,
+			IfaceID:            translator.PodNameToPortName(req.PodName, req.PodNamespace, req.Provider),
 			IPAddr:             ipAddr,
 			Mac:                macAddr,
 			MTU:                mtu,
@@ -233,7 +266,7 @@ func (w *podWorker) HandleAddPodPort(req *request.CniRequest) (*request.CniRespo
 			return nil, err
 		}
 
-		podNicName = podPort.IfName
+		podNicName = podPort.IfaceName
 
 		//ifaceID := translator.PodNameToPortName(req.PodName, req.PodNamespace, req.Provider)
 		//if err = ovs.ConfigInterfaceMirror(csh.Config.EnableMirror, pod.Annotations[fmt.Sprintf(util.MirrorControlAnnotationTemplate, req.Provider)], ifaceID); err != nil {
@@ -266,7 +299,7 @@ func (w *podWorker) HandleAddPodPort(req *request.CniRequest) (*request.CniRespo
 	return response, nil
 }
 
-func (w *podWorker) HandleDelPodPort(req *request.CniRequest) (*request.CniResponse, error) {
+func (w *podWorker) HandleCniDelPodPort(req *request.CniRequest) (*request.CniResponse, error) {
 
 	pod, err := w.podLister.Pods(req.PodNamespace).Get(req.PodName)
 	if err != nil {
@@ -303,7 +336,7 @@ func (w *podWorker) HandleDelPodPort(req *request.CniRequest) (*request.CniRespo
 			ContainerID: req.ContainerID,
 			NetNS:       req.NetNs,
 			DeviceID:    req.DeviceID,
-			IfName:      req.IfName,
+			IfaceName:   req.IfName,
 			PortType:    nicType,
 		}
 
@@ -316,4 +349,66 @@ func (w *podWorker) HandleDelPodPort(req *request.CniRequest) (*request.CniRespo
 	}
 
 	return nil, nil
+}
+
+func (w *podWorker) runPodWorker() {
+	for w.processNextPodWorkItem() {
+	}
+}
+
+func (w *podWorker) processNextPodWorkItem() bool {
+	obj, shutdown := w.podQueue.Get()
+	if shutdown {
+		return false
+	}
+
+	err := func(obj interface{}) error {
+		defer w.podQueue.Done(obj)
+		key, ok := obj.(string)
+		if !ok {
+			w.podQueue.Forget(obj)
+			utilruntime.HandleError(fmt.Errorf("expected string in workqueue but got %#v", obj))
+			return nil
+		}
+		if err := w.handleUpdatePod(key); err != nil {
+			w.podQueue.AddRateLimited(key)
+			return fmt.Errorf("error sync '%s': %s, requeuing", key, err.Error())
+		}
+		w.podQueue.Forget(obj)
+		return nil
+	}(obj)
+	if err != nil {
+		utilruntime.HandleError(err)
+		return true
+	}
+
+	return true
+}
+
+func (w *podWorker) handleUpdatePod(key string) error {
+	namespace, name, err := cache.SplitMetaNamespaceKey(key)
+	if err != nil {
+		klog.Errorf("invalid resource key: %s", key)
+		return nil
+	}
+	klog.Infof("handle qos update for pod %s/%s", namespace, name)
+
+	pod, err := w.podLister.Pods(namespace).Get(name)
+	if err != nil {
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	ifaceID := translator.PodNameToPortName(name, namespace, "")
+	ingressRate := pod.Annotations[consts.AnnotationIngressRate]
+	egressRate := pod.Annotations[consts.AnnotationEgressRate]
+
+	if err = w.ovsWorker.SetInterfaceBandwidth(name, namespace, ifaceID, egressRate, ingressRate); err != nil {
+		klog.Errorf("failed to set port qos: %v", err)
+		return err
+	}
+
+	return nil
 }

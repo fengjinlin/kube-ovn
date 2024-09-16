@@ -122,7 +122,7 @@ func (cs *cniServer) handleAdd(req *restful.Request, resp *restful.Response) {
 	klog.Infof("add port request: %+v", r)
 
 	status := http.StatusOK
-	podResp, err := cs.podWorker.HandleAddPodPort(&r)
+	podResp, err := cs.podWorker.HandleCniAddPodPort(&r)
 	if err != nil {
 		klog.Errorf("failed to add pod port: %v", err)
 		status = http.StatusInternalServerError
@@ -148,7 +148,7 @@ func (cs *cniServer) handleDel(req *restful.Request, resp *restful.Response) {
 	klog.Infof("del port request: %+v", r)
 
 	status := http.StatusOK
-	podResp, err := cs.podWorker.HandleDelPodPort(&r)
+	podResp, err := cs.podWorker.HandleCniDelPodPort(&r)
 	if err != nil {
 		klog.Errorf("failed to del pod port: %v", err)
 		status = http.StatusInternalServerError

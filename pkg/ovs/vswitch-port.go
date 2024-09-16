@@ -168,3 +168,7 @@ func (c *VSwitchClient) DeletePort(brName, portName string) error {
 
 	return nil
 }
+
+func (c *VSwitchClient) UpdatePortOps(port *vswitch.Port, fields ...interface{}) ([]ovsdb.Operation, error) {
+	return c.Where(port).Update(port, fields...)
+}

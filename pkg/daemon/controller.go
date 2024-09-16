@@ -94,6 +94,10 @@ func NewController(config *Configuration, stopCh <-chan struct{}) (Controller, e
 		config: config,
 	}
 
+	if ctrl.ovsWorker, err = NewOvsWorker(config, nodeInformer); err != nil {
+		klog.Error("failed to create ovs worker", err)
+		return nil, err
+	}
 	if ctrl.ipSetsWorker, err = NewIPSetsWorker(config, subnetInformer, nodeInformer, protocol); err != nil {
 		klog.Error("failed to create ipSets worker", err)
 		return nil, err
@@ -106,12 +110,8 @@ func NewController(config *Configuration, stopCh <-chan struct{}) (Controller, e
 		klog.Error("failed to create subnet worker", err)
 		return nil, err
 	}
-	if ctrl.podWorker, err = NewPodWorker(config, subnetInformer, podInformer); err != nil {
+	if ctrl.podWorker, err = NewPodWorker(config, subnetInformer, podInformer, ctrl.ovsWorker); err != nil {
 		klog.Error("failed to create pod worker", err)
-		return nil, err
-	}
-	if ctrl.ovsWorker, err = NewOvsWorker(config, nodeInformer); err != nil {
-		klog.Error("failed to create ovs worker", err)
 		return nil, err
 	}
 	if ctrl.nodeWorker, err = NewNodeWorker(config, nodeInformer); err != nil {
@@ -172,6 +172,7 @@ func (c *controller) StartWorks(stopCh <-chan struct{}) {
 	go c.subnetWorker.Run(stopCh)
 	go c.cniServer.Run(stopCh)
 	go c.ovsWorker.Run(stopCh)
+	go c.podWorker.Run(stopCh)
 
 	mux := http.NewServeMux()
 	if c.config.EnableMetrics {

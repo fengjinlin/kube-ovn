@@ -32,25 +32,24 @@ func NewSubnetWorker(config *Configuration,
 	subnetInformer ovninformer.SubnetInformer,
 	nodeInformer coreinformer.NodeInformer) (SubnetWorker, error) {
 
-	subnetQueue := workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(),
-		workqueue.RateLimitingQueueConfig{Name: "Subnet"})
-
-	mgr := &subnetWorker{
+	w := &subnetWorker{
 		config:        config,
 		subnetsLister: subnetInformer.Lister(),
 		nodesLister:   nodeInformer.Lister(),
-		subnetQueue:   subnetQueue,
 	}
 
+	w.subnetQueue = workqueue.NewRateLimitingQueueWithConfig(workqueue.DefaultControllerRateLimiter(),
+		workqueue.RateLimitingQueueConfig{Name: "Subnet"})
+
 	if _, err := subnetInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    mgr.enqueueAddSubnet,
-		UpdateFunc: mgr.enqueueUpdateSubnet,
-		DeleteFunc: mgr.enqueueDeleteSubnet,
+		AddFunc:    w.enqueueAddSubnet,
+		UpdateFunc: w.enqueueUpdateSubnet,
+		DeleteFunc: w.enqueueDeleteSubnet,
 	}); err != nil {
 		return nil, err
 	}
 
-	return mgr, nil
+	return w, nil
 }
 
 type subnetWorker struct {

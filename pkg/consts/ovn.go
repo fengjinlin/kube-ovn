@@ -80,8 +80,17 @@ const (
 	ExternalIDsKeyNode          = "node"
 	ExternalIDsKeyKind          = "kind"
 
-	ExternalIDsIfaceID = "iface-id"
-	ExternalIDsIP      = "ip"
+	ExternalIDsKeyIfaceID = "iface-id"
+	ExternalIDsKeyIP      = "ip"
 
 	ExternalIDsKeyServiceName = "svc-%s"
+)
+
+const (
+	OtherConfigKeyMaxRate = "max-rate"
+)
+
+const (
+	QosTypeHtb   = "linux-htb"
+	QosTypeNetem = "linux-netem"
 )

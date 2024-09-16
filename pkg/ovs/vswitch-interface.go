@@ -3,16 +3,18 @@ package ovs
 import (
 	"context"
 	"fmt"
-	"github.com/fengjinlin/kube-ovn/pkg/consts"
-	"github.com/fengjinlin/kube-ovn/pkg/ovsdb/vswitch"
+
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"k8s.io/klog/v2"
+
+	"github.com/fengjinlin/kube-ovn/pkg/consts"
+	"github.com/fengjinlin/kube-ovn/pkg/ovsdb/vswitch"
 )
 
 func (c *VSwitchClient) CleanDuplicateInterface(ifaceName, ifaceID string) error {
 	duplicateIfaceFilter := func(iface *vswitch.Interface) bool {
-		if iface.Name == ifaceName && len(iface.ExternalIDs) > 0 && iface.ExternalIDs[consts.ExternalIDsIfaceID] != ifaceID {
+		if iface.Name == ifaceName && len(iface.ExternalIDs) > 0 && iface.ExternalIDs[consts.ExternalIDsKeyIfaceID] != ifaceID {
 			return true
 		}
 		return false
@@ -24,9 +26,9 @@ func (c *VSwitchClient) CleanDuplicateInterface(ifaceName, ifaceID string) error
 	if len(ifaceList) > 0 {
 		var ops []ovsdb.Operation
 		for _, iface := range ifaceList {
-			delete(iface.ExternalIDs, consts.ExternalIDsIfaceID)
+			delete(iface.ExternalIDs, consts.ExternalIDsKeyIfaceID)
 			if op, err := c.Where(iface).Update(iface, &iface.ExternalIDs); err != nil {
-				return fmt.Errorf("generate operations for remove iface externalID %s: %v", consts.ExternalIDsIfaceID, err)
+				return fmt.Errorf("generate operations for remove iface externalID %s: %v", consts.ExternalIDsKeyIfaceID, err)
 			} else {
 				ops = append(ops, op...)
 			}
@@ -79,4 +81,15 @@ func (c *VSwitchClient) CreateInterfaceOp(portName string, iface *vswitch.Interf
 	ops = append(ops, portUpdateOps...)
 
 	return ops, nil
+}
+
+func (c *VSwitchClient) UpdateInterface(iface *vswitch.Interface, fields ...interface{}) error {
+	ops, err := c.Where(iface).Update(iface, fields...)
+	if err != nil {
+		return fmt.Errorf("generate operations for updating interface: %v", err)
+	}
+	if err = c.Transact(context.TODO(), "iface-update", ops); err != nil {
+		return err
+	}
+	return nil
 }

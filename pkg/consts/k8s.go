@@ -43,7 +43,9 @@ const (
 	AnnotationChassis = "ovn.kubernetes.io/chassis"
 
 	AnnotationIngressRateTemplate = "%s.kubernetes.io/ingress_rate"
+	AnnotationIngressRate         = "ovn.kubernetes.io/ingress_rate"
 	AnnotationEgressRateTemplate  = "%s.kubernetes.io/egress_rate"
+	AnnotationEgressRate          = "ovn.kubernetes.io/egress_rate"
 )
 
 const (
